@@ -1,0 +1,31 @@
+6                 //LOTES
+2                 //VEICULOS
+3                 //TALHOES
+2                 //EMPILHADEIRAS
+1.0               //TEMPO DE CARREGAMENTO
+
+talhoes 
+LT = Total de lotes em um talhao a 
+2 3 1
+
+matrizes 
+LE = se um lote i(linhas) pertence a um talhao a(colunas)
+1 0 0
+1 0 0
+0 1 0
+0 1 0
+0 1 0
+0 0 1
+
+Ti = Tempo de ida da fabrica ao lote i
+4.0 3.5 4.5 1.0 2.0 6.0
+   
+Tv = Tempo de volta do lote i para a fábrica 
+4.5 4.0 5.0 1.5 2.5 6.5
+
+DE = Tempo de deslocamento entre o talhão a e b
+0    4.0  8.0
+4.0  0    4.0
+8.0  4.0    0
+
+arch -x86_64 make entrada.txt
