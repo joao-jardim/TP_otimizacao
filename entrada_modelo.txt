@@ -4,11 +4,9 @@
 2                 //EMPILHADEIRAS
 1.0               //TEMPO DE CARREGAMENTO
 
-talhoes 
 LT = Total de lotes em um talhao a 
 2 3 1
 
-matrizes 
 LE = se um lote i(linhas) pertence a um talhao a(colunas)
 1 0 0
 1 0 0
