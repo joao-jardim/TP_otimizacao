@@ -517,10 +517,6 @@ int main(int argc, char *argv[]) {
     // pela empilhadeira a partir da garagem.
     for (int e = 0; e < E; ++e) {
         for (int a = 0; a < T; ++a) { // Para cada talhão 'a'
-            // c[e][a] >= DE[T][a] * y[e][T][a]
-            // Onde T é o índice da garagem de partida das empilhadeiras.
-            // NOTA: Esta implementação assume que sua matriz DE foi carregada com os
-            // tempos de viagem a partir da garagem na linha de índice T.
             modelo.add(c[e][a] >= DE[T][a] * y[e][T][a]);
         }
     }
