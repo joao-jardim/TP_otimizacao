@@ -94,6 +94,7 @@ int main(int argc, char *argv[]) {
 
     }
 
+    fclose(fp);
     //L[0] = fabrica. L[L+1] = fabrica como nó final.
 
     //Declaração do ambiente e do modelo matemático
@@ -206,23 +207,79 @@ int main(int argc, char *argv[]) {
     }
 
     //Expressao 4: assegura que se o veıculo k nao atende o lote i, nao pode atender nenhum outro lote imediatamente antes ou apos.
+    // Conecta a visita do veículo (s) com a rota (x).
     for (int k = 0; k < V; ++k) {
         for (int i = 0; i < L; ++i) { // Para cada lote i
             IloExpr saida(env), chegada(env);
-            for (int j = 0; j < L; ++j) { // Para cada outro lote j
-                if (i != j) {
-                    saida += x[k][i][j];
-                    chegada += x[k][j][i];
-                }
-            }
+
+            // Soma todos os arcos de SAÍDA possíveis do lote i
+            // (para outros lotes ou para a garagem final L+1)
+            for (int j = 0; j < L; ++j) if (i != j) saida += x[k][i][j];
+            saida += x[k][i][L + 1];
+
+            // Soma todos os arcos de CHEGADA possíveis no lote i
+            // (vindo de outros lotes ou da garagem inicial L)
+            for (int j = 0; j < L; ++j) if (i != j) chegada += x[k][j][i];
+            chegada += x[k][L][i];
+
             modelo.add(saida == s[k][i]);
             modelo.add(chegada == s[k][i]);
+
             saida.end();
             chegada.end();
         }
     }
 
-    //Expressao 5 e 6 reduntantes. Resolvidas em 4,7 e 8 
+    // Expressão 5: se veículo k atende o lote i, então ele deve estar conectado
+    for (int k = 0; k < V; ++k) {
+        for (int i = 1; i <= L; ++i) { // apenas lotes reais
+            IloExpr conexao(env);
+
+            // Arcos saindo de i
+            for (int j = 0; j <= L+1; ++j) {
+                if (j != i) {
+                    conexao += x[k][i][j];
+                }
+            }
+
+            // Arcos entrando em i
+            for (int j = 0; j <= L+1; ++j) {
+                if (j != i) {
+                    conexao += x[k][j][i];
+                }
+            }
+
+            // Se s[k][i] = 1, então conexao >= 1
+            modelo.add(IloIfThen(env, s[k][i] == 1, conexao >= 1));
+
+            conexao.end();
+        }
+    }
+
+    //expressao 6 
+    for (int k = 0; k < V; ++k) {
+        IloExpr lhs(env); // lado esquerdo = transições
+        for (int i = 1; i <= L; ++i) {
+            for (int j = 1; j <= L; ++j) {
+                if (i != j) {
+                    lhs += x[k][i][j];
+                }
+            }
+        }
+
+        IloExpr rhs(env); // lado direito = soma(s[k][i]) - 1
+        for (int i = 1; i <= L; ++i) {
+            rhs += s[k][i];
+        }
+        rhs -= 1;
+
+        modelo.add(lhs == rhs);
+
+        lhs.end();
+        rhs.end();
+    }
+
+
 
     //Expressao 7: certifica que todos os veículos irao sair da fabrica 
     for (int k = 0; k < V; ++k) {
