@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     LE = new int*[L]; for (int i=0; i<L; i++) LE[i] = new int[T];
     Ti = new float[L];
     Tv = new float[L];
-    DE = new float*[T]; for (int i=0; i<T; i++) DE[i] = new float[T];
+    DE = new float*[T+1]; for (int i=0; i<T+1; i++) DE[i] = new float[T];
 
     //LT
     printf("\n\nLT: Total de lotes em cada talhão\n");
@@ -86,6 +86,12 @@ int main(int argc, char *argv[]) {
             fscanf(fp, "%f", &DE[i][j]);
             printf("Tempo entre os talhões %d e %d:\t %.2f\n", i+1, j+1, DE[i][j]);
         }    
+    }
+
+    for (int j = 0; j < T; j++) {
+        fscanf(fp, "%f", &DE[T][j]);
+        //printf("Tempo da garagem ao talhão:\t %.2f\n", i+1, j+1, DE[i][j]);
+
     }
 
     //L[0] = fabrica. L[L+1] = fabrica como nó final.
@@ -182,352 +188,285 @@ int main(int argc, char *argv[]) {
     modelo.add(IloMinimize(env, fo));
 
     //Restrições
+    const double M = 100000.0; // Um número grande para as restrições lógicas
+
     //Expressão 2: Garante que o ultimo lote só podera ser atendido apos todos os anteriores
-    for (int i = 0; i < L-1; ++i) {
-        IloExpr expr(env);
-        expr = h[i] - m;
-        
-        IloRange rest1(env, -IloInfinity, expr, 0); // -∞ ≤ h[i] - m ≤ 0
-        modelo.add(rest1);
-        expr.end();
+    for (int i = 0; i < L; ++i) {
+        modelo.add(h[i] <= m);
     }
     
     //Expressao 3: Indica que cada lote deve ser atendido por exatamente um veiculo.
     for (int i = 0; i < L; ++i) {
         IloExpr expr(env);
-        for (int v = 0; v < V; ++v) {
-            expr += s[v][i];
+        for (int k = 0; k < V; ++k) {
+            expr += s[k][i];
         }
-        
-        IloRange rest2(env, 1, expr, 1); // 1 ≤ ∑s[v][i] ≤ 1
-        modelo.add(rest2);
+        modelo.add(expr == 1);
         expr.end();
     }
 
     //Expressao 4: assegura que se o veıculo k nao atende o lote i, nao pode atender nenhum outro lote imediatamente antes ou apos.
     for (int k = 0; k < V; ++k) {
-        for (int i = 1; i < L; ++i) {
-            IloExpr soma_arcos(env);
-            for (int j = 1; j <= L; ++j) {
+        for (int i = 0; i < L; ++i) { // Para cada lote i
+            IloExpr saida(env), chegada(env);
+            for (int j = 0; j < L; ++j) { // Para cada outro lote j
                 if (i != j) {
-                    soma_arcos += x[k][i][j]; // Soma arcos que saem de i para j
-                    soma_arcos += x[k][j][i]; // Soma arcos que chegam em i vindo de j
+                    saida += x[k][i][j];
+                    chegada += x[k][j][i];
                 }
             }
-            modelo.add(soma_arcos == 2 * s[k][i]);
-            soma_arcos.end();
+            modelo.add(saida == s[k][i]);
+            modelo.add(chegada == s[k][i]);
+            saida.end();
+            chegada.end();
         }
     }
 
-    //Expressao 5: assegura que se o veıculo k atende o lote i, deve obrigatoriamente atender algum outro lote imediatamente antes
-    //ou apos, mesmo que virtual (representado a garagem).
-    for (int k = 0; k < V; ++k) {
-        for (int i = 0; i < L; ++i) {
-            IloExpr expr(env);
-            for (int j = 1; j <= L+1; ++j) {
-                if (j != i) expr += x[k][i][j];
-            }
-
-            for (int j = 0; j <= L; ++j) {
-                if (j != i) expr += x[k][j][i];
-            }
-            
-            // se s[k][i] = 1, então só um dos caminhos pode ser verdade
-            modelo.add(expr == s[k][i]); 
-            expr.end();
-        }
-    }
-
-    //Expressao 6: garante que o numero de transiçoes realizadas por um veıculo é exatamente uma unidade 
-    // menor do que o numero total de lotes atendidos por esse veıculo. Essa restricão é necessária para 
-    // evitar a formação de sub-rotas no problema.
-    for (int k = 0; k < V; ++k) {
-        // Lado Esquerdo: Soma de todas as transições ENTRE LOTES
-        IloExpr transicoes(env);
-        for (int i = 1; i <= L; ++i) {      // i percorre todos os lotes
-            for (int j = 1; j <= L; ++j) {  // j percorre todos os lotes
-                if (i != j) {
-                    transicoes += x[k][i][j];
-                }
-            }
-        }
-
-        // Lado Direito: Soma de todos os lotes atendidos pelo veículo k
-        IloExpr lotes_servidos(env);
-        for (int i = 1; i <= L; ++i) {      // i percorre todos os lotes
-            lotes_servidos += s[k][i];
-        }
-
-        // A restrição só se aplica se o veículo atender pelo menos um lote.
-        // Isso evita que o modelo tente satisfazer 0 == -1 para veículos não utilizados.
-        modelo.add(IloIfThen(env, lotes_servidos >= 1, transicoes == lotes_servidos - 1));
-
-        transicoes.end();
-        lotes_servidos.end();
-    }
+    //Expressao 5 e 6 reduntantes. Resolvidas em 4,7 e 8 
 
     //Expressao 7: certifica que todos os veículos irao sair da fabrica 
     for (int k = 0; k < V; ++k) {
         IloExpr expr(env);
-        for (int j = 1; j < L+1; ++j) {
-            expr += x[k][0][j]; // Considerando o lote 0 como a garagem
+        for (int j = 0; j < L; ++j) { // Para cada lote j
+            expr += x[k][L][j];
         }
-        IloRange rest7(env, 1, expr, 1); 
-        modelo.add(rest7);
+        expr += x[k][L][L+1]; // Ou direto para o depósito de chegada
+        modelo.add(expr == 1);
         expr.end();
     }
 
-    // certifica que todos os veículos retornem a fábrica 
+    //Expressao 8: certifica que todos os veículos retornem a fábrica 
     for (int k = 0; k < V; ++k) {
         IloExpr expr(env);
-        for (int i = 0; i < L; ++i) {
-            expr += x[k][i][L+1]; // Considerando o lote 0 como a garagem
+        for (int i = 0; i < L; ++i) { // Vindo de cada lote i
+            expr += x[k][i][L + 1];
         }
-        IloRange rest8(env, 1, expr, 1);
-        modelo.add(rest8);
+        expr += x[k][L][L + 1]; // Ou vindo direto do depósito de partida
+        modelo.add(expr == 1);
         expr.end();
     }
 
-    //Expressao 9: garante que a quantidade de veículos que sai de um determinado lote é 
-    //igual à quantidade que chega no próximo a ser atendido (continuidade de fluxo).
+    // Expressão 9: Conservacao de fluxo para cada lote (veículos).
     for (int k = 0; k < V; ++k) {
-        for (int i = 0; i < L; ++i) {
-            IloExpr expr1(env);
-            IloExpr expr2(env);
-
-            for (int j = 0; j < L; j++) {  // corrigido
-                expr1 += x[k][j][i];
+        for (int i = 0; i < L; ++i) { // Para cada lote i
+            IloExpr total_chegadas(env);
+            IloExpr total_saidas(env);
+            
+            for (int j = 0; j < L + 2; ++j) {
+                if (i != j) {
+                    total_chegadas += x[k][j][i];
+                    total_saidas += x[k][i][j];
+                }
             }
-            for (int j = 1; j <= L; j++) {  // corrigido
-                expr2 += x[k][i][j];
-            }
-            IloExpr expr(env);
-            expr = expr1 - expr2;
-            modelo.add(IloRange(env, 0, expr, 0));
-            expr.end();
+            modelo.add(total_chegadas == total_saidas);
+            total_chegadas.end();
+            total_saidas.end();
         }
     }
 
     //expressão 10 do artigo
-    double M = 1e5;
     for (int k = 0; k < V; ++k) {
-        for (int i = 0; i < L; ++i) {
-            // b[k][i] <= Ti[i] + M*(1 - x[k][i][0])
-            modelo.add(b[k][i] <= Ti[i] + M * (1 - x[k][i][0]));
-
-            // b[k][i] >= Ti[i] - M*(1 - x[k][i][0])
-            modelo.add(b[k][i] >= Ti[i] - M * (1 - x[k][i][0]));
+        for (int i = 1; i < L; ++i) {
+            modelo.add(h[i] >= d[k][i] + C - M * (1 - s[k][i]));
         }
     }
 
-    // //expressão 11 do artigo
-    // for (int k = 0; k < V; ++k) {
-    //     for (int i = 0; i < L; ++i) {
-    //         for (int j = 0; j < L; ++j) {
-    //             if (i != j) {
-    //                 // Cria a restrição:
-    //                 // b[j][k] - b[i][k] - w[i][k] - C - Tv[i] - Ti[j] + M*(1 - x[i][j][k]) >= 0
-    //                 modelo.add(
-    //                     b[j][k] - b[i][k] - w[i][k] - C - Tv[i] - Ti[j] + M * (1 - x[i][j][k]) >= 0
-    //                 );
-    //             }
-    //         }
-    //     }
-    // }
+    //Expressao 11
+    for (int k = 0; k < V; ++k) {
+        for (int i = 0; i < L; ++i) { // Loop para lotes de 0 a L-1
+            modelo.add(d[k][i] >= b[k][i]);
+        }
+    }
 
-
-    //ERRADO
-    // //expressão 12 do artigo
-    // for (int k = 0; k < V; ++k) {
-    //     for (int i = 0; i < L; ++i) {
-    //         IloExpr expr(env);
-    //         expr = d[i][k] - b[i][k] - w[i][k];
-    //         modelo.add(IloRange(env, 0, expr, 0));
-    //         expr.end();
-    //     }
-    // }
     
-    // //expressão 13 do artigo
-    // for (int k = 0; k < V; ++k) {
-    //     for (int i = 0; i < L; ++i) {
-    //         IloExpr expr(env);
-    //         expr = d[i][k] - M * s[i][k];
-    //         modelo.add(IloRange(env, -IloInfinity, expr, 0));
-    //         expr.end();
-    //     }
-    // }
+    // Expressão 12: Sincronização entre empilhadeira e caminhão.
+    // O carregamento do lote i só começa após a empilhadeira preparar a carga 
+    // no talhão a ao qual o lote i pertence.
+    for (int i = 0; i < L; ++i) {
+        for (int a = 0; a < T; ++a) {
+            // A condição principal é verificada primeiro
+            if (LE[i][a] == 1) {
+                // Os loops de veículo e empilhadeira só são executados quando necessário
+                for (int k = 0; k < V; ++k) {
+                    for (int e = 0; e < E; ++e) {
+                        // A restrição é ativada se s[k][i]=1 E z[e][a]=1.
+                        modelo.add(d[k][i] >= c[e][a] + DE[a][a] - M * (2 - s[k][i] - z[e][a]));
+                    }
+                }
+            }
+        }
+    }
 
-    // //expressão 14 do artigo
-    // for (int k = 0; k < V; ++k) {
-    //     for (int i = 0; i < L; ++i) {
-    //         IloExpr expr1(env), expr2(env);
-    //         expr1 = d[i][k] - h[i] - M * (1 - s[i][k]);
-    //         expr2 = d[i][k] - h[i] + M * (1 - s[i][k]);
-    //         modelo.add(IloRange(env, -IloInfinity, expr1, 0));
-    //         modelo.add(IloRange(env, 0, expr2, IloInfinity));
-    //         expr1.end();
-    //         expr2.end();
-    //     }
-    // }
+    // Expressão 13 (Versão Corrigida para Evitar Inviabilidade)
+    // Garante o sequenciamento de tempo correto entre lotes consecutivos em uma rota.
+    for (int k = 0; k < V; ++k) {
+        for (int i = 0; i < L; ++i) {
+            for (int j = 0; j < L; ++j) {
+                if (i != j) {
+                    // A chegada em j (b[k][j]) deve ser apos a conclusao em i (h[i]),
+                    // mais o tempo de volta do lote i (Tv[i]) e o tempo de ida para o lote j (Ti[j]).
+                    // A restricao so e ativada se o arco x[k][i][j] for usado (igual a 1).
+                    modelo.add(b[k][j] >= h[i] + Tv[i] + Ti[j] - M * (1 - x[k][i][j]));
+                }
+            }
+        }
+    }
 
-    // //expressão 15 do artigo
-    // for (int i = 0; i < L; ++i) {
-    //     for (int j = 0; j < L; ++j) {
-    //         if (i != j) {
-    //             for (int a = 0; a < T; ++a) {
-    //                 if (LE[a][i] == 1 && LE[a][j] == 1) {
-    //                     IloExpr expr1(env), expr2(env);
-    //                     expr1 = h[i] - h[j] - C + M * y[i][j][a];
-    //                     expr2 = h[j] - h[i] - C + M * (1 - y[i][j][a]);
-    //                     modelo.add(IloRange(env, 0, expr1, IloInfinity));
-    //                     modelo.add(IloRange(env, 0, expr2, IloInfinity));
-    //                     expr1.end();
-    //                     expr2.end();
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+    // Expressão 14: Define o tempo de chegada para o primeiro lote visitado
+    // a partir da garagem.
+    for (int k = 0; k < V; ++k) {
+        for (int i = 0; i < L; ++i) { // Para cada lote i
+            // b[k][i] >= Ti[i] * x[k][L][i]
+            // Onde L é o índice da garagem de partida.
+            modelo.add(b[k][i] >= Ti[i] * x[k][L][i]);
+        }
+    }
 
-    // //expressão 16 do artigo
-    // for (int a = 0; a < T; ++a) {
-    //     IloExpr expr(env);
-    //     for (int e = 0; e < E; ++e) {
-    //         expr += z[e][a];
-    //     }
-    //     modelo.add(IloRange(env, 1, expr, 1));
-    //     expr.end();
-    // }
+    // Expressão 15: Garante que cada talhão 'a' seja atendido por exatamente uma empilhadeira 'e'.
+    for (int a = 0; a < T; ++a) { // Para cada talhão 'a'
+        IloExpr expr(env);
+        for (int e = 0; e < E; ++e) { // Some sobre todas as empilhadeiras 'e'
+            expr += z[e][a];
+        }
+        modelo.add(expr == 1);
+        expr.end();
+    }
 
-    // //expressão 17 do artigo
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a < T; ++a) {
-    //         for (int b = 0; b < T; ++b) {
-    //             if (a != b) {
-    //                 IloExpr expr1(env), expr2(env);
-    //                 expr1 = y[a][b][e] - z[e][a];
-    //                 expr2 = y[b][a][e] - z[e][a];
-    //                 modelo.add(IloRange(env, -IloInfinity, expr1, 0));
-    //                 modelo.add(IloRange(env, -IloInfinity, expr2, 0));
-    //                 expr1.end();
-    //                 expr2.end();
-    //             }
-    //         }
-    //     }
-    // }
+    // Expressão 16: Conecta o atendimento do talhão (z) com a rota da empilhadeira (y).
+    // Garante que, se uma empilhadeira atende um talhão, um arco deve chegar e um arco deve sair.
+    for (int e = 0; e < E; ++e) {
+        for (int a = 0; a < T; ++a) { // Para cada empilhadeira 'e' e cada talhão 'a'
+            IloExpr saida(env);
+            IloExpr chegada(env);
 
-    // //expressão 18 do artigo
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a < T; ++a) {
-    //         IloExpr out(env), in(env);
-    //         for (int b = 0; b < T; ++b) {
-    //             if (a != b) {
-    //                 out += y[a][b][e];
-    //                 in  += y[b][a][e];
-    //             }
-    //         }
-    //         // out <= z[e][a]
-    //         modelo.add(IloRange(env, -IloInfinity, out - z[e][a], 0));
+            // 1ª parte: Soma dos arcos de SAÍDA do talhão 'a'
+            // (para outros talhões 'b' ou para a garagem final T+1)
+            for (int b = 0; b < T; ++b) {
+                if (a != b) {
+                    saida += y[e][a][b];
+                }
+            }
+            saida += y[e][a][T + 1];
 
-    //         // in <= z[e][a]
-    //         modelo.add(IloRange(env, -IloInfinity, in - z[e][a], 0));
+            // 2ª parte: Soma dos arcos de CHEGADA no talhão 'a'
+            // (vindo de outros talhões 'b' ou da garagem inicial T)
+            for (int b = 0; b < T; ++b) {
+                if (a != b) {
+                    chegada += y[e][b][a];
+                }
+            }
+            chegada += y[e][T][a];
 
-    //         // out + in >= z[e][a]
-    //         modelo.add(IloRange(env, 0, out + in - z[e][a], IloInfinity));
+            // Adiciona as duas restrições ao modelo
+            modelo.add(saida == z[e][a]);
+            modelo.add(chegada == z[e][a]);
 
-    //         out.end();
-    //         in.end();
-    //     }
-    // }
+            saida.end();
+            chegada.end();
+        }
+    }
 
+    // Expressão 17: Eliminação de sub-rotas para empilhadeiras (contagem de arcos).
+    // O número de arcos entre talhões é igual ao número de talhões servidos menos um.
+    for (int e = 0; e < E; ++e) {
+        // Lado Esquerdo: Soma das transições entre talhões distintos
+        IloExpr transicoes(env);
+        for (int a = 0; a < T; ++a) {
+            for (int b = 0; b < T; ++b) {
+                if (a != b) {
+                    transicoes += y[e][a][b];
+                }
+            }
+        }
 
-    // //expressão 19 do artigo
-    // for (int e = 0; e < E; ++e) {
-    //     IloExpr expr(env);
-    //     for (int b = 1; b <= T+1; ++b) {
-    //         expr += y[0][b][e];
-    //     }
-    //     modelo.add(IloRange(env, 1, expr, 1));
-    //     expr.end();
-    // }
+        // Lado Direito: Soma dos talhões atendidos pela empilhadeira 'e'
+        IloExpr talhoes_servidos(env);
+        for (int a = 0; a < T; ++a) {
+            talhoes_servidos += z[e][a];
+        }
 
-    // //expressão 20 do artigo 
-    // for (int e = 0; e < E; ++e) {
-    //     IloExpr expr(env);
-    //     for (int a = 0; a <= T; ++a) {
-    //         expr += y[a][T+1][e];
-    //     }
-    //     modelo.add(IloRange(env, 1, expr, 1));
-    //     expr.end();
-    // }
+        // A restrição só se aplica se a empilhadeira for usada (atender >= 1 talhão),
+        // para evitar a inviabilidade 0 = -1.
+        modelo.add(IloIfThen(env, talhoes_servidos >= 1, transicoes == talhoes_servidos - 1));
 
-    // //expressão 21 do artigo 
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a < T; ++a) {
-    //         IloExpr expr(env);
-    //         for (int b = 0; b <= T; ++b) {
-    //             if (a != b) expr += y[b][a][e];
-    //         }
-    //         for (int b = 1; b <= T+1; ++b) {
-    //             if (a != b) expr -= y[a][b][e];
-    //         }
-    //         modelo.add(IloRange(env, 0, expr, 0));
-    //         expr.end();
-    //     }
-    // }
+        transicoes.end();
+        talhoes_servidos.end();
+    }
 
-    // //expressão 22 do artigo
-    // M = 1000000; // valor suficientemente grande
+    // Expressão 18: Conservação de fluxo para cada talhão.
+    // Para cada talhão 'b', o total de arcos que chegam deve ser igual ao total de arcos que saem.
+    for (int e = 0; e < E; ++e) {
+        for (int b = 0; b < T; ++b) { // Para cada talhão 'b'
+            IloExpr total_chegadas(env);
+            IloExpr total_saidas(env);
+            
+            // Somamos sobre todos os nós possíveis 'j'
+            for (int j = 0; j < T + 2; ++j) {
+                if (b != j) {
+                    total_chegadas += y[e][j][b]; // Arcos que chegam em 'b' vindo de 'j'
+                    total_saidas += y[e][b][j];   // Arcos que saem de 'b' para 'j'
+                }
+            }
+            modelo.add(total_chegadas == total_saidas);
+            total_chegadas.end();
+            total_saidas.end();
+        }
+    }
 
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a < T; ++a) {
-    //         for (int b = 0; b < T; ++b) {
-    //             if (a != b) {
-    //                 IloExpr expr(env);
-    //                 expr = c[e][b] - c[e][a] 
-    //                     - (C * LT[a]) - DE[a][b] 
-    //                     + M * (1 - y[a][b][e]);
-    //                 modelo.add(IloRange(env, 0, expr, IloInfinity));
-    //                 expr.end();
-    //             }
-    //         }
-    //     }
-    // }
+    // Expressão 19: Cada empilhadeira 'e' deve sair da garagem de partida (T) exatamente uma vez.
+    for (int e = 0; e < E; ++e) {
+        IloExpr expr(env);
+        // O destino pode ser qualquer talhão (0 a T-1) ou a garagem de chegada (T+1).
+        for (int b = 0; b <= T + 1; ++b) {
+            // A empilhadeira não pode ir da garagem de partida (T) para si mesma.
+            if (b != T) {
+                expr += y[e][T][b];
+            }
+        }
+        modelo.add(expr == 1);
+        expr.end();
+    }
 
-    // //expressão 23 do artigo
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a < T; ++a) {
-    //         IloExpr expr(env);
-    //         expr = c[e][a] - M * z[e][a];
-    //         modelo.add(IloRange(env, -IloInfinity, expr, 0));
-    //         expr.end();
-    //     }
-    // }
+    // Expressão 20: Cada empilhadeira 'e' deve chegar na garagem de chegada (T+1) exatamente uma vez.
+    for (int e = 0; e < E; ++e) {
+        IloExpr expr(env);
+        // A origem pode ser qualquer talhão (0 a T-1) ou a garagem de partida (T).
+        for (int a = 0; a <= T + 1; ++a) {
+            // A empilhadeira não pode chegar na garagem final (T+1) vindo dela mesma.
+            if (a != T + 1) {
+                expr += y[e][a][T + 1];
+            }
+        }
+        modelo.add(expr == 1);
+        expr.end();
+    }
 
-    // //expressão 24 do artigo
-    // for (int e = 0; e < E; ++e) {
-    //     for (int a = 0; a <= T; ++a) {
-    //         for (int b = 0; b <= T; ++b) {
-    //             if (a != b) {
-    //                 for (int i = 0; i < L; ++i) {
-    //                     if (LE[a][i] == 1) {
-    //                         // h_i >= c_a^e - M*(1 - y[a][b][e])
-    //                         IloExpr expr1(env);
-    //                         expr1 = h[i] - c[e][a] + M * (1 - y[a][b][e]);
-    //                         modelo.add(IloRange(env, 0, expr1, IloInfinity));
-    //                         expr1.end();
-
-    //                         // h_i <= c_b^e + DE[a][b] + M*(1 - y[a][b][e])
-    //                         IloExpr expr2(env);
-    //                         expr2 = h[i] - c[e][b] - DE[a][b] - M * (1 - y[a][b][e]);
-    //                         modelo.add(IloRange(env, -IloInfinity, expr2, 0));
-    //                         expr2.end();
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+    // Expressão 21: Sequenciamento de tempo para as empilhadeiras (entre talhões).
+    // Se uma empilhadeira vai de 'a' para 'b', o tempo de início em 'b' (c[e][b])
+    // depende do tempo de início e da duração do serviço em 'a'.
+    for (int e = 0; e < E; ++e) {
+        for (int a = 0; a < T; ++a) {
+            for (int b = 0; b < T; ++b) {
+                if (a != b) {
+                    // c_b >= c_a + (tempo de serviço em a) + (tempo de viagem a->b) - M*(1-y_ab)
+                    // O tempo de serviço no talhão 'a' é o número de lotes (LT[a]) vezes o tempo C.
+                    modelo.add(c[e][b] >= c[e][a] + (LT[a] * C) + DE[a][b] - M * (1 - y[e][a][b]));
+                }
+            }
+        }
+    }
+    
+    // Expressão 22: Define o tempo de início para o primeiro talhão visitado 
+    // pela empilhadeira a partir da garagem.
+    for (int e = 0; e < E; ++e) {
+        for (int a = 0; a < T; ++a) { // Para cada talhão 'a'
+            // c[e][a] >= DE[T][a] * y[e][T][a]
+            // Onde T é o índice da garagem de partida das empilhadeiras.
+            // NOTA: Esta implementação assume que sua matriz DE foi carregada com os
+            // tempos de viagem a partir da garagem na linha de índice T.
+            modelo.add(c[e][a] >= DE[T][a] * y[e][T][a]);
+        }
+    }
 
     //Resolução do matemático
     IloCplex cplex(modelo);
@@ -555,9 +494,150 @@ int main(int argc, char *argv[]) {
             break;
     }
 
-    printf("\nStatus da solução: %s\n", statusString);
-    printf("\nCusto total: %.2f\n", cplex.getObjValue());
-    printf("\nSolução:\n");
-    double valor = cplex.getValue(m);
+    //Impressao dos resultados
+
+    cout << "\n--------------------------------------------------" << endl;
+    cout << "               RESULTADOS DA OTIMIZACAO" << endl;
+    cout << "--------------------------------------------------" << endl;
+
+    if (cplex.getStatus() == IloAlgorithm::Optimal || cplex.getStatus() == IloAlgorithm::Feasible) {
+        
+        const char* statusString = (cplex.getStatus() == IloAlgorithm::Optimal) ? "Otima Encontrada" : "Viavel Encontrada";
+        printf("Status da solucao: %s\n", statusString);
+
+        cout << "\n>> FUNCAO OBJETIVO (MAKESPAN)" << endl;
+        printf("Tempo total para conclusao de todas as tarefas: %.2f horas\n", cplex.getValue(m));
+
+        cout << "\n>> ROTAS DOS VEICULOS" << endl;
+        for (int k = 0; k < V; k++) {
+            IloNum totalLotesServidos = 0;
+            for(int i = 0; i < L; i++) totalLotesServidos += cplex.getValue(s[k][i]);
+
+            if (totalLotesServidos < 0.5) {
+                printf("\nVeiculo %d: Nao utilizado.\n", k);
+                continue;
+            }
+
+            printf("\n--- Veiculo %d ---\n", k);
+            
+            int loteAtual = -1;
+            for (int j = 0; j < L; j++) {
+                if (cplex.getValue(x[k][L][j]) > 0.9) {
+                    loteAtual = j;
+                    break;
+                }
+            }
+
+            if(loteAtual == -1) {
+                printf("Rota: Garagem -> Garagem\n");
+                continue;
+            }
+
+            string rota = "Garagem -> ";
+            // CORREÇÃO: Vetor para rastrear lotes já impressos nesta rota
+            vector<bool> visitados(L, false); 
+            int contadorSeguranca = 0; // Evita loop em caso de erro extremo
+
+            while(loteAtual != -1 && contadorSeguranca < L + 1) {
+                // Se já visitamos este lote na rota, encontramos um ciclo. Paramos.
+                if(visitados[loteAtual]) {
+                    rota += "... [CICLO DETECTADO]";
+                    break;
+                }
+                visitados[loteAtual] = true;
+                contadorSeguranca++;
+
+                rota += "Lote " + to_string(loteAtual);
+
+                printf("  - Lote %d:\n", loteAtual);
+                printf("    - Chegada (b): %.2f\n", cplex.getValue(b[k][loteAtual]));
+                printf("    - Inicio Carga (d): %.2f\n", cplex.getValue(d[k][loteAtual]));
+                printf("    - Fim Carga (h): %.2f\n", cplex.getValue(h[loteAtual]));
+
+                int proximoLote = -1;
+                for (int j = 0; j < L; j++) {
+                    if (loteAtual != j && cplex.getValue(x[k][loteAtual][j]) > 0.9) {
+                        proximoLote = j;
+                        break;
+                    }
+                }
+
+                if (proximoLote == -1) {
+                    rota += " -> Garagem";
+                    loteAtual = -1;
+                } else {
+                    rota += " -> ";
+                    loteAtual = proximoLote;
+                }
+            }
+            cout << "\n  Sequencia da Rota: " << rota << endl;
+        }
+
+        cout << "\n\n>> ROTAS DAS EMPILHADEIRAS" << endl;
+        for (int e = 0; e < E; e++) {
+            IloNum totalTalhoesServidos = 0;
+            for(int a = 0; a < T; a++) totalTalhoesServidos += cplex.getValue(z[e][a]);
+             if (totalTalhoesServidos < 0.5) {
+                printf("\nEmpilhadeira %d: Nao utilizada.\n", e);
+                continue;
+            }
+
+            printf("\n--- Empilhadeira %d ---\n", e);
+
+            int talhaoAtual = -1;
+            for (int b = 0; b < T; b++) {
+                if (cplex.getValue(y[e][T][b]) > 0.9) {
+                    talhaoAtual = b;
+                    break;
+                }
+            }
+
+            if(talhaoAtual == -1) {
+                 printf("Rota: Garagem -> Garagem\n");
+                 continue;
+            }
+
+            string rota_emp = "Garagem -> ";
+            vector<bool> visitados_emp(T, false);
+            int contadorSeguranca_emp = 0;
+
+            while(talhaoAtual != -1 && contadorSeguranca_emp < T + 1) {
+                if(visitados_emp[talhaoAtual]){
+                    rota_emp += "... [CICLO DETECTADO]";
+                    break;
+                }
+                visitados_emp[talhaoAtual] = true;
+                contadorSeguranca_emp++;
+                
+                rota_emp += "Talhao " + to_string(talhaoAtual);
+
+                printf("  - Talhao %d:\n", talhaoAtual);
+                printf("    - Inicio Servico (c): %.2f\n", cplex.getValue(c[e][talhaoAtual]));
+
+                int proximoTalhao = -1;
+                for (int b = 0; b < T; b++) {
+                    if (talhaoAtual != b && cplex.getValue(y[e][talhaoAtual][b]) > 0.9) {
+                        proximoTalhao = b;
+                        break;
+                    }
+                }
+
+                if (proximoTalhao == -1) {
+                    rota_emp += " -> Garagem";
+                    talhaoAtual = -1;
+                } else {
+                    rota_emp += " -> ";
+                    talhaoAtual = proximoTalhao;
+                }
+            }
+             cout << "\n  Sequencia da Rota: " << rota_emp << endl;
+        }
+
+    } else {
+        cout << "\n>> NENHUMA SOLUCAO ENCONTRADA" << endl;
+        cout << "Status da solucao: " << cplex.getStatus() << endl;
+        cout << "Verifique o arquivo 'modelo.lp' para analisar as restricoes." << endl;
+    }
+    cout << "\n--------------------------------------------------" << endl;
     return 0;
 }

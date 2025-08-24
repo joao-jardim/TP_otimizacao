@@ -25,5 +25,6 @@ DE = Tempo de deslocamento entre o talhão a e b
 0    4.0  8.0
 4.0  0    4.0
 8.0  4.0    0
+2.0  3.0  5.0
 
 arch -x86_64 make entrada.txt
