@@ -4,9 +4,6 @@
 
 #include <ilcplex/ilocplex.h>
 
-//AINDA NAO ENTENDO BEM ESSES TYPEDEFS...
-//nao coloquei nomes nos talhoes. 
-//o quao boa prática é nesse projeto?
 typedef IloArray<IloNumVarArray> IloNumVarMatrix;
 typedef IloArray<IloNumVarMatrix> IloNumVar3Matrix;
 typedef IloArray<IloNumVar3Matrix> IloNumVar4Matrix;
@@ -191,7 +188,8 @@ int main(int argc, char *argv[]) {
     //Restrições
     const double M = 100000.0; // Um número grande para as restrições lógicas
 
-    //Expressão 2: Garante que o ultimo lote só podera ser atendido apos todos os anteriores
+    //Expressão 2: Garante que o ultimo lote 
+    //só podera ser atendido apos todos os anteriores
     for (int i = 0; i < L; ++i) {
         modelo.add(h[i] <= m);
     }
@@ -232,52 +230,34 @@ int main(int argc, char *argv[]) {
 
     // Expressão 5: se veículo k atende o lote i, então ele deve estar conectado
     for (int k = 0; k < V; ++k) {
-        for (int i = 1; i <= L; ++i) { // apenas lotes reais
-            IloExpr conexao(env);
+        for (int i = 1; i <= L; ++i) { // só lotes reais
+            IloExpr out(env), in(env);
+            for (int j = 0; j <= L+1; ++j) if (j != i) out += x[k][i][j];
+            for (int j = 0; j <= L+1; ++j) if (j != i)  in += x[k][j][i];
 
-            // Arcos saindo de i
-            for (int j = 0; j <= L+1; ++j) {
-                if (j != i) {
-                    conexao += x[k][i][j];
-                }
-            }
-
-            // Arcos entrando em i
-            for (int j = 0; j <= L+1; ++j) {
-                if (j != i) {
-                    conexao += x[k][j][i];
-                }
-            }
-
-            // Se s[k][i] = 1, então conexao >= 1
-            modelo.add(IloIfThen(env, s[k][i] == 1, conexao >= 1));
-
-            conexao.end();
+            modelo.add(out == s[k][i]);  // exatamente 1 saída se s=1; 0 se s=0
+            modelo.add(in  == s[k][i]);  // exatamente 1 entrada se s=1; 0 se s=0
+            out.end(); in.end();
         }
     }
+
+
 
     //expressao 6 
     for (int k = 0; k < V; ++k) {
-        IloExpr lhs(env); // lado esquerdo = transições
-        for (int i = 1; i <= L; ++i) {
-            for (int j = 1; j <= L; ++j) {
-                if (i != j) {
-                    lhs += x[k][i][j];
-                }
-            }
-        }
+        IloExpr lhs(env); // transições entre lotes
+        for (int i = 1; i <= L; ++i)
+            for (int j = 1; j <= L; ++j)
+                if (i != j) lhs += x[k][i][j];
 
-        IloExpr rhs(env); // lado direito = soma(s[k][i]) - 1
-        for (int i = 1; i <= L; ++i) {
-            rhs += s[k][i];
-        }
+        IloExpr rhs(env); // lotes servidos - 1
+        for (int i = 1; i <= L; ++i) rhs += s[k][i];
         rhs -= 1;
 
         modelo.add(lhs == rhs);
-
-        lhs.end();
-        rhs.end();
+        lhs.end(); rhs.end();
     }
+
 
 
 
@@ -554,7 +534,12 @@ int main(int argc, char *argv[]) {
     cout << "--------------------------------------------------" << endl;
 
     if (cplex.getStatus() == IloAlgorithm::Optimal || cplex.getStatus() == IloAlgorithm::Feasible) {
-        
+        printf("\nMatriz s[k][i]:\n");
+        for (int k = 0; k < V; ++k) {
+            printf("Veiculo %d: ", k);
+            for (int i = 0; i < L; ++i) printf("%d ", (int)round(cplex.getValue(s[k][i])));
+            printf("\n");
+        }
         const char* statusString = (cplex.getStatus() == IloAlgorithm::Optimal) ? "Otima Encontrada" : "Viavel Encontrada";
         printf("Status da solucao: %s\n", statusString);
 
@@ -587,7 +572,6 @@ int main(int argc, char *argv[]) {
             }
 
             string rota = "Garagem -> ";
-            // CORREÇÃO: Vetor para rastrear lotes já impressos nesta rota
             vector<bool> visitados(L, false); 
             int contadorSeguranca = 0; // Evita loop em caso de erro extremo
 
@@ -600,9 +584,9 @@ int main(int argc, char *argv[]) {
                 visitados[loteAtual] = true;
                 contadorSeguranca++;
 
-                rota += "Lote " + to_string(loteAtual);
+                rota += "Lote " + to_string(loteAtual + 1);
 
-                printf("  - Lote %d:\n", loteAtual);
+                printf("  - Lote %d:\n", loteAtual + 1);
                 printf("    - Chegada (b): %.2f\n", cplex.getValue(b[k][loteAtual]));
                 printf("    - Inicio Carga (d): %.2f\n", cplex.getValue(d[k][loteAtual]));
                 printf("    - Fim Carga (h): %.2f\n", cplex.getValue(h[loteAtual]));
